@@ -921,7 +921,7 @@ class FormaTexClient:
             :class:`WordCountResult` with text, header, caption, and total word
             counts plus structure counts (headers, floats, inline and display math).
         """
-        data = self._http.post_json("/api/v1/wordcount", {"latex": latex})
+        data = self._http.post_json("/api/v1/analyze/wordcount", {"latex": latex})
         return WordCountResult(
             text_words=data.get("textWords", 0),
             header_words=data.get("headerWords", 0),
@@ -946,7 +946,7 @@ class FormaTexClient:
             :class:`DependenciesResult` with all declared packages split into
             ``available`` (found in TeX Live) and ``unavailable`` lists.
         """
-        data = self._http.post_json("/api/v1/dependencies", {"latex": latex})
+        data = self._http.post_json("/api/v1/analyze/dependencies", {"latex": latex})
         return DependenciesResult(
             packages=data.get("packages") or [],
             available=data.get("available") or [],
@@ -965,7 +965,7 @@ class FormaTexClient:
             List of :class:`PackageStatus` objects in the same order as *names*.
         """
         joined = ",".join(names)
-        data = self._http.get_json(f"/api/v1/packages?names={joined}")
+        data = self._http.get_json(f"/api/v1/analyze/packages?names={joined}")
         return [
             PackageStatus(name=p["name"], available=p["available"])
             for p in data.get("packages", [])
@@ -988,7 +988,7 @@ class FormaTexClient:
             :class:`DocumentMetadata` with title, authors, date, abstract,
             and keywords.
         """
-        data = self._http.post_json("/api/v1/extract/metadata", {"latex": latex})
+        data = self._http.post_json("/api/v1/analyze/metadata", {"latex": latex})
         return DocumentMetadata(
             title=data.get("title", ""),
             authors=data.get("authors") or [],
