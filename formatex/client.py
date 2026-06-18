@@ -218,6 +218,18 @@ class BibResult:
     duration_ms: int
 
 
+@dataclass
+class ThumbnailResult:
+    """Result of a thumbnail or compile-to-image operation."""
+
+    data: bytes
+    """Raw PNG bytes."""
+    width: int
+    """Image width in pixels (0 if unknown)."""
+    height: int
+    """Image height in pixels (0 if unknown)."""
+
+
 # ── Helper ────────────────────────────────────────────────────────────────────
 
 
@@ -1062,3 +1074,123 @@ class FormaTexClient:
             count=data.get("count", len(entries)),
             duration_ms=data.get("durationMs", 0),
         )
+
+    # ── Rendering ────────────────────────────────────────────────────────────
+
+    def render_tikz(
+        self,
+        tikz: str,
+        *,
+        libraries: list[str] | None = None,
+        packages: list[str] | None = None,
+        format: str = "png",
+        dpi: int | None = None,
+        transparent: bool = False,
+    ) -> RenderResult:
+        """Render a TikZ diagram to a PNG or SVG image.
+
+        The ``tikz`` parameter accepts raw TikZ drawing commands — with or
+        without the surrounding ``\\begin{tikzpicture}...\\end{tikzpicture}``
+        wrapper. The body is compiled inside a ``standalone`` document class.
+
+        Does **not** count against your monthly compilation quota.
+
+        Args:
+            tikz: TikZ body to render.
+            libraries: TikZ libraries to load (e.g. ``["arrows.meta", "calc"]``).
+                Up to 20.
+            packages: Extra LaTeX packages (must be in the allowed list). Up to 10.
+                Allowed values: ``mhchem``, ``siunitx``, ``xcolor``, ``physics``,
+                ``bm``, ``mathtools``, ``esint``, ``cancel``, ``chemfig``.
+            format: ``"png"`` (default) or ``"svg"``.
+            dpi: PNG resolution, 72–600 (default 150). Ignored for SVG.
+            transparent: ``True`` for transparent background.
+
+        Returns:
+            :class:`RenderResult` with raw image bytes and pixel dimensions.
+
+        Example::
+
+            result = client.render_tikz(
+                r"\\draw (0,0) -- (2,0) -- (1,1.732) -- cycle;",
+                libraries=["arrows.meta"],
+                dpi=200,
+            )
+            Path("triangle.png").write_bytes(result.data)
+        """
+        body: dict[str, Any] = {"tikz": tikz, "format": format, "transparent": transparent}
+        if libraries:
+            body["libraries"] = libraries
+        if packages:
+            body["packages"] = packages
+        if dpi is not None:
+            body["dpi"] = dpi
+
+        data = self._http.post_json("/api/v1/render/tikz", body)
+        return RenderResult(
+            data=base64.b64decode(data["image"]),
+            format=data.get("format", format),
+            width=data.get("width", 0),
+            height=data.get("height", 0),
+        )
+
+    def thumbnail(
+        self,
+        latex: str,
+        *,
+        engine: str = "pdflatex",
+        page: int = 1,
+        dpi: int = 150,
+    ) -> ThumbnailResult:
+        """Compile a full LaTeX document and return a rasterized PNG of the requested page.
+
+        Useful for generating document previews, cover images, or slide thumbnails
+        without handling PDF files. Does **not** count against your monthly
+        compilation quota. Rate limit: 30 requests/minute per API key.
+
+        Args:
+            latex: Full LaTeX source document.
+            engine: ``"pdflatex"`` (default), ``"xelatex"``, or ``"lualatex"``.
+            page: 1-indexed page number to rasterize (default: 1).
+            dpi: PNG resolution, 72–300 (default 150).
+
+        Returns:
+            :class:`ThumbnailResult` with raw PNG bytes and pixel dimensions.
+
+        Example::
+
+            result = client.thumbnail(latex, page=1, dpi=150)
+            Path("preview.png").write_bytes(result.data)
+        """
+        data = self._http.post_json("/api/v1/thumbnail", {
+            "latex": latex,
+            "engine": engine,
+            "page": page,
+            "dpi": dpi,
+        })
+        return ThumbnailResult(
+            data=base64.b64decode(data["image"]),
+            width=data.get("width", 0),
+            height=data.get("height", 0),
+        )
+
+    def compile_to_image(
+        self,
+        latex: str,
+        *,
+        engine: str = "pdflatex",
+        page: int = 1,
+        dpi: int = 150,
+    ) -> ThumbnailResult:
+        """Alias for :meth:`thumbnail` — compile a LaTeX document and return a PNG image.
+
+        Args:
+            latex: Full LaTeX source document.
+            engine: ``"pdflatex"`` (default), ``"xelatex"``, or ``"lualatex"``.
+            page: 1-indexed page number to rasterize (default: 1).
+            dpi: PNG resolution, 72–300 (default 150).
+
+        Returns:
+            :class:`ThumbnailResult` with raw PNG bytes and pixel dimensions.
+        """
+        return self.thumbnail(latex, engine=engine, page=page, dpi=dpi)
