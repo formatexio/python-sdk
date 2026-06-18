@@ -7,6 +7,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.3.0] - 2026-06-18
+
+### Added
+- `analyze_bibliography(bib)` — parse BibTeX into structured entries with APA, MLA, and Chicago citations
+- New dataclasses: `BibEntry`, `BibFormatted`, `BibResult`
+
+---
+
 ## [1.2.0] - 2026-06-18
 
 ### Added

@@ -189,6 +189,35 @@ class DocumentMetadata:
     keywords: list[str]
 
 
+@dataclass
+class BibFormatted:
+    """Pre-formatted citation strings for a single BibTeX entry."""
+
+    apa: str
+    mla: str
+    chicago: str
+
+
+@dataclass
+class BibEntry:
+    """A single parsed BibTeX entry."""
+
+    key: str
+    type: str                   # article, book, inproceedings, etc.
+    fields: dict[str, str]      # all field key-value pairs
+    authors: list[str]          # split author/editor names
+    formatted: BibFormatted     # APA, MLA, Chicago citations
+
+
+@dataclass
+class BibResult:
+    """Result of a bibliography parse operation."""
+
+    entries: list[BibEntry]
+    count: int
+    duration_ms: int
+
+
 # ── Helper ────────────────────────────────────────────────────────────────────
 
 
@@ -995,4 +1024,41 @@ class FormaTexClient:
             date=data.get("date", ""),
             abstract=data.get("abstract", ""),
             keywords=data.get("keywords") or [],
+        )
+
+    def analyze_bibliography(self, bib: str) -> BibResult:
+        """Parse a BibTeX string into structured entries with formatted citations.
+
+        Handles ``@article``, ``@book``, ``@inproceedings``, ``@phdthesis``,
+        ``@incollection``, and all other entry types (generic fallback).
+        Supports ``@string`` macros and ``#`` concatenation.
+        No compilation, no quota cost.
+
+        Args:
+            bib: Raw BibTeX string (one or more entries).
+
+        Returns:
+            :class:`BibResult` with parsed entries and APA/MLA/Chicago citations.
+        """
+        data = self._http.post_json("/api/v1/analyze/bibliography", {"bib": bib})
+
+        entries = []
+        for e in data.get("entries") or []:
+            fmt = e.get("formatted") or {}
+            entries.append(BibEntry(
+                key=e.get("key", ""),
+                type=e.get("type", ""),
+                fields=e.get("fields") or {},
+                authors=e.get("authors") or [],
+                formatted=BibFormatted(
+                    apa=fmt.get("apa", ""),
+                    mla=fmt.get("mla", ""),
+                    chicago=fmt.get("chicago", ""),
+                ),
+            ))
+
+        return BibResult(
+            entries=entries,
+            count=data.get("count", len(entries)),
+            duration_ms=data.get("durationMs", 0),
         )
