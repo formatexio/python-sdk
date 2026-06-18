@@ -91,10 +91,81 @@ class SyntaxResult:
 
 @dataclass
 class ConvertResult:
-    """Result of a LaTeX → DOCX conversion."""
+    """Result of a LaTeX document conversion."""
 
-    docx: bytes
+    data: bytes
+    """Raw output bytes (DOCX, HTML, EPUB, Markdown, plain text, or ODT)."""
+    format: str
+    """Output format: ``"docx"``, ``"html"``, ``"epub"``, ``"markdown"``, ``"txt"``, or ``"odt"``."""
     size_bytes: int
+    docx: bytes = field(init=False)
+    """Deprecated alias for ``data`` when ``format == "docx"``; empty bytes otherwise."""
+
+    def __post_init__(self) -> None:
+        self.docx = self.data if self.format == "docx" else b""
+
+
+@dataclass
+class PDFExtractResult:
+    """Result of a PDF text extraction."""
+
+    text: str
+    """Extracted plain text."""
+    pages: int
+    """Total number of pages in the PDF."""
+    duration_ms: int
+
+
+@dataclass
+class PDFPageImage:
+    """One rendered page from a PDF."""
+
+    page: int
+    """1-based page number."""
+    image: str
+    """Base64-encoded image bytes."""
+
+
+@dataclass
+class PDFPagesResult:
+    """Result of rendering PDF pages to images."""
+
+    pages: list[PDFPageImage]
+    format: str   # "png" or "jpeg"
+    total_pages: int
+    duration_ms: int
+
+
+@dataclass
+class PDFBinaryResult:
+    """Result of a binary PDF operation (compress, merge, pdfa)."""
+
+    data: bytes
+    """Raw PDF bytes."""
+    size_bytes: int
+    original_size_bytes: int = 0
+    """Original PDF size before the operation; 0 when not applicable (merge)."""
+    duration_ms: int = 0
+
+
+@dataclass
+class PDFSplitPage:
+    """One page from a split PDF."""
+
+    page: int
+    """1-based page number."""
+    pdf: bytes
+    """Raw PDF bytes for this page."""
+    size_bytes: int
+
+
+@dataclass
+class PDFSplitResult:
+    """Result of a PDF split operation."""
+
+    pages: list[PDFSplitPage]
+    total_pages: int
+    duration_ms: int
 
 
 @dataclass
@@ -666,53 +737,375 @@ class FormaTexClient:
         self,
         latex: str,
         *,
+        format: str = "docx",
         files: list[dict] | None = None,
     ) -> ConvertResult:
-        """Convert LaTeX source to a Word document (DOCX) via pandoc.
+        """Convert LaTeX source to a document in the requested format via pandoc.
 
-        Math is converted to native OOXML equations (Word's equation editor).
-        Section structure, tables, and images are preserved.
+        Supported formats: ``"docx"`` (default), ``"html"``, ``"epub"``,
+        ``"markdown"``, ``"txt"``, ``"odt"``.
+
+        Math is converted appropriately for the target format (e.g. OOXML
+        equations for DOCX, MathML for HTML). Section structure, tables, and
+        images are preserved where the format allows.
 
         Counts against your monthly compilation quota (engine logged as ``pandoc``).
 
         Args:
             latex: LaTeX source code.
+            format: Output format (default ``"docx"``).
             files: Companion files (images, .bib) — use :func:`file_entry`.
 
         Returns:
-            :class:`ConvertResult` with raw ``.docx`` bytes.
+            :class:`ConvertResult` with raw output bytes.
 
         Example::
 
             result = client.convert(latex)
             Path("document.docx").write_bytes(result.docx)
+
+            html_result = client.convert(latex, format="html")
+            Path("document.html").write_bytes(html_result.data)
         """
-        body: dict[str, Any] = {"latex": latex}
+        body: dict[str, Any] = {"latex": latex, "format": format}
         if files:
             body["files"] = files
-        docx = self._http.post_bytes("/api/v1/convert", body)
-        return ConvertResult(docx=docx, size_bytes=len(docx))
+        raw = self._http.post_json("/api/v1/convert", body)
+        data = base64.b64decode(raw["data"])
+        return ConvertResult(
+            data=data,
+            format=raw.get("format", format),
+            size_bytes=raw.get("sizeBytes", len(data)),
+        )
 
     def convert_to_file(
         self,
         latex: str,
         output_path: str | Path,
         *,
+        format: str = "docx",
         files: list[dict] | None = None,
     ) -> ConvertResult:
-        """Convert LaTeX to DOCX and write directly to a file.
+        """Convert LaTeX to a document and write directly to a file.
 
         Args:
             latex: LaTeX source code.
-            output_path: Destination path for the ``.docx`` file.
+            output_path: Destination path for the output file.
+            format: Output format (default ``"docx"``).
             files: Companion files — use :func:`file_entry`.
 
         Returns:
             :class:`ConvertResult`.
         """
-        result = self.convert(latex, files=files)
-        Path(output_path).write_bytes(result.docx)
+        result = self.convert(latex, format=format, files=files)
+        Path(output_path).write_bytes(result.data)
         return result
+
+    # ── Markup → PDF ──────────────────────────────────────────────────────────
+
+    def compile_markdown(
+        self,
+        source: str,
+        *,
+        engine: str = "pdflatex",
+        runs: int | None = None,
+        timeout: int | None = None,
+    ) -> "CompileResult":
+        """Compile a Markdown document to PDF.
+
+        Pandoc converts Markdown to LaTeX, then compiles with the selected
+        engine. Counts against your monthly compilation quota.
+
+        Args:
+            source: Markdown source text.
+            engine: ``"pdflatex"`` (default), ``"xelatex"``, or ``"lualatex"``.
+            runs: Number of compiler passes (1–5).
+            timeout: Max compile time in seconds (plan-limited).
+
+        Returns:
+            :class:`CompileResult` with raw PDF bytes.
+
+        Example::
+
+            result = client.compile_markdown("# Hello\\n\\nWorld.")
+            Path("out.pdf").write_bytes(result.pdf)
+        """
+        return self._compile_markup("/api/v1/compile/markdown", source, engine=engine, runs=runs, timeout=timeout)
+
+    def compile_html(
+        self,
+        source: str,
+        *,
+        engine: str = "pdflatex",
+        runs: int | None = None,
+        timeout: int | None = None,
+    ) -> "CompileResult":
+        """Compile an HTML document to PDF.
+
+        Pandoc converts HTML to LaTeX, then compiles with the selected engine.
+        Counts against your monthly compilation quota.
+
+        Args:
+            source: HTML source string.
+            engine: ``"pdflatex"`` (default), ``"xelatex"``, or ``"lualatex"``.
+            runs: Number of compiler passes (1–5).
+            timeout: Max compile time in seconds (plan-limited).
+
+        Returns:
+            :class:`CompileResult` with raw PDF bytes.
+        """
+        return self._compile_markup("/api/v1/compile/html", source, engine=engine, runs=runs, timeout=timeout)
+
+    def compile_rst(
+        self,
+        source: str,
+        *,
+        engine: str = "pdflatex",
+        runs: int | None = None,
+        timeout: int | None = None,
+    ) -> "CompileResult":
+        """Compile a reStructuredText document to PDF.
+
+        Pandoc converts RST to LaTeX, then compiles with the selected engine.
+        Counts against your monthly compilation quota.
+
+        Args:
+            source: RST source text.
+            engine: ``"pdflatex"`` (default), ``"xelatex"``, or ``"lualatex"``.
+            runs: Number of compiler passes (1–5).
+            timeout: Max compile time in seconds (plan-limited).
+
+        Returns:
+            :class:`CompileResult` with raw PDF bytes.
+        """
+        return self._compile_markup("/api/v1/compile/rst", source, engine=engine, runs=runs, timeout=timeout)
+
+    def _compile_markup(
+        self,
+        path: str,
+        source: str,
+        *,
+        engine: str,
+        runs: int | None,
+        timeout: int | None,
+    ) -> "CompileResult":
+        body: dict[str, Any] = {"source": source, "engine": engine}
+        if runs is not None:
+            body["runs"] = runs
+        if timeout is not None:
+            body["timeout"] = timeout
+        raw = self._http.post_json(path, body)
+        return CompileResult(
+            pdf=base64.b64decode(raw["pdf"]),
+            engine=raw.get("engine", engine),
+            duration_ms=raw.get("duration", 0),
+            size_bytes=raw.get("sizeBytes", 0),
+            job_id=raw.get("jobId", ""),
+            log=raw.get("log", ""),
+        )
+
+    # ── PDF Utilities ─────────────────────────────────────────────────────────
+
+    def pdf_extract(self, pdf: bytes, *, page: int = 0) -> PDFExtractResult:
+        """Extract plain text from a PDF using pdftotext.
+
+        Does **not** count against your monthly compilation quota.
+        Rate limit: 30 requests/minute per API key.
+
+        Args:
+            pdf: Raw PDF bytes.
+            page: Specific page to extract (1-based). ``0`` extracts all pages.
+
+        Returns:
+            :class:`PDFExtractResult` with the extracted text and page count.
+
+        Example::
+
+            result = client.pdf_extract(pdf_bytes)
+            print(result.text)
+        """
+        body: dict[str, Any] = {"pdf": base64.b64encode(pdf).decode(), "page": page}
+        raw = self._http.post_json("/api/v1/pdf/extract", body)
+        return PDFExtractResult(
+            text=raw.get("text", ""),
+            pages=raw.get("pages", 0),
+            duration_ms=raw.get("duration_ms", 0),
+        )
+
+    def pdf_pages(
+        self,
+        pdf: bytes,
+        *,
+        dpi: int = 150,
+        format: str = "png",
+        first: int | None = None,
+        last: int | None = None,
+    ) -> PDFPagesResult:
+        """Render PDF pages to images using pdftoppm.
+
+        Does **not** count against your monthly compilation quota.
+        Rate limit: 30 requests/minute per API key.
+
+        Args:
+            pdf: Raw PDF bytes.
+            dpi: PNG resolution, 72–300 (default 150).
+            format: ``"png"`` (default) or ``"jpeg"``.
+            first: First page to render, 1-based (default: first page).
+            last: Last page to render, 1-based (default: last page).
+
+        Returns:
+            :class:`PDFPagesResult` with base64-encoded page images.
+
+        Example::
+
+            result = client.pdf_pages(pdf_bytes, dpi=150, first=1, last=3)
+            for page in result.pages:
+                Path(f"page-{page.page}.png").write_bytes(
+                    base64.b64decode(page.image)
+                )
+        """
+        body: dict[str, Any] = {"pdf": base64.b64encode(pdf).decode(), "dpi": dpi, "format": format}
+        if first is not None:
+            body["first"] = first
+        if last is not None:
+            body["last"] = last
+        raw = self._http.post_json("/api/v1/pdf/pages", body)
+        pages = [
+            PDFPageImage(page=p["page"], image=p["image"])
+            for p in (raw.get("pages") or [])
+        ]
+        return PDFPagesResult(
+            pages=pages,
+            format=raw.get("format", format),
+            total_pages=raw.get("total_pages", 0),
+            duration_ms=raw.get("duration_ms", 0),
+        )
+
+    def pdf_compress(
+        self,
+        pdf: bytes,
+        *,
+        quality: str = "ebook",
+    ) -> PDFBinaryResult:
+        """Compress a PDF using Ghostscript.
+
+        Does **not** count against your monthly compilation quota.
+        Rate limit: 30 requests/minute per API key.
+
+        Args:
+            pdf: Raw PDF bytes.
+            quality: Ghostscript quality preset.
+                ``"screen"`` (72 dpi), ``"ebook"`` (150 dpi, default),
+                ``"printer"`` (300 dpi), ``"prepress"`` (300 dpi, color-preserving).
+
+        Returns:
+            :class:`PDFBinaryResult` with compressed PDF bytes.
+
+        Example::
+
+            result = client.pdf_compress(pdf_bytes, quality="screen")
+            Path("small.pdf").write_bytes(result.data)
+        """
+        body = {"pdf": base64.b64encode(pdf).decode(), "quality": quality}
+        raw = self._http.post_json("/api/v1/pdf/compress", body)
+        data = base64.b64decode(raw["pdf"])
+        return PDFBinaryResult(
+            data=data,
+            size_bytes=raw.get("size_bytes", len(data)),
+            original_size_bytes=raw.get("original_size_bytes", len(pdf)),
+            duration_ms=raw.get("duration_ms", 0),
+        )
+
+    def pdf_merge(self, pdfs: list[bytes]) -> PDFBinaryResult:
+        """Merge multiple PDFs into one using qpdf.
+
+        Does **not** count against your monthly compilation quota.
+        Rate limit: 30 requests/minute per API key.
+
+        Args:
+            pdfs: List of raw PDF bytes (2–20 items).
+
+        Returns:
+            :class:`PDFBinaryResult` with merged PDF bytes.
+
+        Example::
+
+            result = client.pdf_merge([pdf1, pdf2, pdf3])
+            Path("merged.pdf").write_bytes(result.data)
+        """
+        body = {"pdfs": [base64.b64encode(p).decode() for p in pdfs]}
+        raw = self._http.post_json("/api/v1/pdf/merge", body)
+        data = base64.b64decode(raw["pdf"])
+        return PDFBinaryResult(
+            data=data,
+            size_bytes=raw.get("size_bytes", len(data)),
+            duration_ms=raw.get("duration_ms", 0),
+        )
+
+    def pdf_split(self, pdf: bytes) -> PDFSplitResult:
+        """Split a PDF into individual page PDFs using qpdf.
+
+        Does **not** count against your monthly compilation quota.
+        Rate limit: 30 requests/minute per API key. Max 100 pages.
+
+        Args:
+            pdf: Raw PDF bytes.
+
+        Returns:
+            :class:`PDFSplitResult` with one :class:`PDFSplitPage` per page.
+
+        Example::
+
+            result = client.pdf_split(pdf_bytes)
+            for page in result.pages:
+                Path(f"page-{page.page}.pdf").write_bytes(page.pdf)
+        """
+        body = {"pdf": base64.b64encode(pdf).decode()}
+        raw = self._http.post_json("/api/v1/pdf/split", body)
+        pages = [
+            PDFSplitPage(
+                page=p["page"],
+                pdf=base64.b64decode(p["pdf"]),
+                size_bytes=p.get("size_bytes", 0),
+            )
+            for p in (raw.get("pages") or [])
+        ]
+        return PDFSplitResult(
+            pages=pages,
+            total_pages=raw.get("total_pages", 0),
+            duration_ms=raw.get("duration_ms", 0),
+        )
+
+    def pdf_pdfa(self, pdf: bytes) -> PDFBinaryResult:
+        """Convert a PDF to PDF/A-1b using Ghostscript.
+
+        PDF/A is the ISO standard for long-term archiving. The conversion
+        embeds fonts and color profiles to ensure the document is
+        self-contained and readable without external dependencies.
+
+        Does **not** count against your monthly compilation quota.
+        Rate limit: 30 requests/minute per API key.
+
+        Args:
+            pdf: Raw PDF bytes.
+
+        Returns:
+            :class:`PDFBinaryResult` with PDF/A compliant bytes.
+
+        Example::
+
+            result = client.pdf_pdfa(pdf_bytes)
+            Path("archive.pdf").write_bytes(result.data)
+        """
+        body = {"pdf": base64.b64encode(pdf).decode()}
+        raw = self._http.post_json("/api/v1/pdf/pdfa", body)
+        data = base64.b64decode(raw["pdf"])
+        return PDFBinaryResult(
+            data=data,
+            size_bytes=raw.get("size_bytes", len(data)),
+            original_size_bytes=raw.get("original_size_bytes", len(pdf)),
+            duration_ms=raw.get("duration_ms", 0),
+        )
 
     # ── Usage ────────────────────────────────────────────────────────────────
 

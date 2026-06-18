@@ -10,6 +10,12 @@ from formatex.client import (
     LintResult,
     SyntaxResult,
     UsageStats,
+    PDFExtractResult,
+    PDFPageImage,
+    PDFPagesResult,
+    PDFBinaryResult,
+    PDFSplitPage,
+    PDFSplitResult,
     file_entry,
 )
 from formatex.exceptions import (
@@ -33,6 +39,12 @@ __all__ = [
     "LintResult",
     "SyntaxResult",
     "UsageStats",
+    "PDFExtractResult",
+    "PDFPageImage",
+    "PDFPagesResult",
+    "PDFBinaryResult",
+    "PDFSplitPage",
+    "PDFSplitResult",
     # Exceptions
     "FormaTexError",
     "AuthenticationError",
