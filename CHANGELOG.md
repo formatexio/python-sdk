@@ -7,6 +7,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.2.0] - 2026-06-18
+
+### Added
+- `word_count(latex)` — word, header, caption, float, and math counts via texcount (no quota)
+- `extract_dependencies(latex)` — list all `\usepackage` declarations; split into available/unavailable
+- `check_packages(names)` — check whether TeX packages are installed in TeX Live
+- `extract_metadata(latex)` — extract title, authors, date, abstract, and keywords
+- New dataclasses: `WordCountResult`, `DependenciesResult`, `PackageStatus`, `DocumentMetadata`
+
+---
+
 ## [1.1.0] - 2026-06-17
 
 ### Added

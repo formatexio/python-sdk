@@ -145,6 +145,50 @@ class ProjectFile:
     raw: dict
 
 
+@dataclass
+class WordCountResult:
+    """Word and structure counts from a LaTeX document (via texcount)."""
+
+    text_words: int
+    header_words: int
+    caption_words: int
+    headers: int
+    floats: int
+    math_inline: int
+    math_display: int
+    total_words: int
+    duration_ms: int
+
+
+@dataclass
+class DependenciesResult:
+    """Package dependency analysis for a LaTeX document."""
+
+    packages: list[str]        # all packages declared in the document
+    available: list[str]       # packages found in TeX Live
+    unavailable: list[str]     # packages not found in TeX Live
+    duration_ms: int
+
+
+@dataclass
+class PackageStatus:
+    """Availability of a single TeX package."""
+
+    name: str
+    available: bool
+
+
+@dataclass
+class DocumentMetadata:
+    """Extracted metadata from a LaTeX document."""
+
+    title: str
+    authors: list[str]
+    date: str
+    abstract: str
+    keywords: list[str]
+
+
 # ── Helper ────────────────────────────────────────────────────────────────────
 
 
@@ -862,3 +906,93 @@ class FormaTexClient:
             Raw ZIP bytes containing all project files.
         """
         return self._http.get_bytes(f"/api/v1/projects/{project_id}/export")
+
+    # ── Document Intelligence ─────────────────────────────────────────────────
+
+    def word_count(self, latex: str) -> WordCountResult:
+        """Count words, headers, floats, and math in a LaTeX document.
+
+        Uses texcount under the hood — no compilation, no quota cost.
+
+        Args:
+            latex: Full LaTeX source.
+
+        Returns:
+            :class:`WordCountResult` with text, header, caption, and total word
+            counts plus structure counts (headers, floats, inline and display math).
+        """
+        data = self._http.post_json("/api/v1/wordcount", {"latex": latex})
+        return WordCountResult(
+            text_words=data.get("textWords", 0),
+            header_words=data.get("headerWords", 0),
+            caption_words=data.get("captionWords", 0),
+            headers=data.get("headers", 0),
+            floats=data.get("floats", 0),
+            math_inline=data.get("mathInline", 0),
+            math_display=data.get("mathDisplay", 0),
+            total_words=data.get("totalWords", 0),
+            duration_ms=data.get("durationMs", 0),
+        )
+
+    def extract_dependencies(self, latex: str) -> DependenciesResult:
+        """Extract all \\usepackage declarations and check their availability.
+
+        No compilation needed — pure static analysis.
+
+        Args:
+            latex: Full LaTeX source.
+
+        Returns:
+            :class:`DependenciesResult` with all declared packages split into
+            ``available`` (found in TeX Live) and ``unavailable`` lists.
+        """
+        data = self._http.post_json("/api/v1/dependencies", {"latex": latex})
+        return DependenciesResult(
+            packages=data.get("packages") or [],
+            available=data.get("available") or [],
+            unavailable=data.get("unavailable") or [],
+            duration_ms=data.get("durationMs", 0),
+        )
+
+    def check_packages(self, names: list[str]) -> list[PackageStatus]:
+        """Check whether TeX packages are installed in TeX Live.
+
+        Args:
+            names: Package names without ``.sty`` suffix, e.g.
+                   ``["pgfplots", "tikz", "mhchem"]``. Maximum 50 per call.
+
+        Returns:
+            List of :class:`PackageStatus` objects in the same order as *names*.
+        """
+        joined = ",".join(names)
+        data = self._http.get_json(f"/api/v1/packages?names={joined}")
+        return [
+            PackageStatus(name=p["name"], available=p["available"])
+            for p in data.get("packages", [])
+        ]
+
+    def extract_metadata(self, latex: str) -> DocumentMetadata:
+        """Extract structured metadata from a LaTeX document.
+
+        Parses ``\\title``, ``\\author``, ``\\date``, ``abstract`` environment,
+        and ``\\keywords`` — no compilation, no quota cost.
+
+        Note:
+            Results are best-effort. Documents using custom macros or
+            non-standard document classes may yield partial results.
+
+        Args:
+            latex: Full LaTeX source.
+
+        Returns:
+            :class:`DocumentMetadata` with title, authors, date, abstract,
+            and keywords.
+        """
+        data = self._http.post_json("/api/v1/extract/metadata", {"latex": latex})
+        return DocumentMetadata(
+            title=data.get("title", ""),
+            authors=data.get("authors") or [],
+            date=data.get("date", ""),
+            abstract=data.get("abstract", ""),
+            keywords=data.get("keywords") or [],
+        )
