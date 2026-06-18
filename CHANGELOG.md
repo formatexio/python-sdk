@@ -7,6 +7,26 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.1.0] - 2026-06-17
+
+### Added
+- `render_equation(latex, **kwargs)` — render a single math equation as PNG or SVG
+- `render_equations(equations)` — batch render up to 20 equations
+- `get_compilation_pdf(compilation_id)` — retrieve stored PDF from a sync compile by job ID
+- `list_projects()` — list all projects accessible via API key
+- `get_project(project_id)` — get a single project
+- `list_project_files(project_id)` — list files in a project
+- `read_project_file(project_id, file_name)` — download a project file as raw bytes
+- `upsert_project_file(project_id, file_name, content, content_type)` — create or replace a project file
+- `delete_project_file(project_id, file_name)` — delete a project file
+- `rename_project_file(project_id, old_path, new_path)` — rename/move a project file
+- `export_project(project_id)` — download the full project as a ZIP archive
+- New dataclasses: `RenderResult`, `Project`, `ProjectFile`
+- `overage` field added to `UsageStats`
+- `put_raw` and `post_empty` internal HTTP methods for binary uploads and no-body responses
+
+---
+
 ## [1.0.4] - 2026-02-28
 
 ### Removed

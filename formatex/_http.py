@@ -55,6 +55,16 @@ class HTTPClient:
         self._raise_for_status(resp)
         return resp.content
 
+    def put_raw(self, path: str, data: bytes, content_type: str = "application/octet-stream") -> None:
+        """PUT raw bytes (e.g. file upload); expects 204 No Content."""
+        resp = self._client.put(path, content=data, headers={"Content-Type": content_type})
+        self._raise_for_status(resp)
+
+    def post_empty(self, path: str, body: dict) -> None:
+        """POST JSON body without expecting a JSON response (handles 200/204)."""
+        resp = self._client.post(path, json=body)
+        self._raise_for_status(resp)
+
     def delete_json(self, path: str) -> dict:
         """DELETE, expect JSON back (or empty body on 204)."""
         resp = self._client.delete(path)
