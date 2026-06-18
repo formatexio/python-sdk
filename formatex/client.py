@@ -230,6 +230,37 @@ class ThumbnailResult:
     """Image height in pixels (0 if unknown)."""
 
 
+@dataclass
+class BatchResultItem:
+    """One entry in a batch manifest."""
+
+    index: int
+    """0-based row index."""
+    filename: str
+    success: bool
+    error: str = ""
+    """Error message; empty string when ``success`` is ``True``."""
+
+
+@dataclass
+class BatchManifest:
+    """Manifest describing the outcome of a batch or merge operation."""
+
+    total: int
+    success: int
+    failed: int
+    results: list[BatchResultItem]
+
+
+@dataclass
+class BatchResult:
+    """Result of a batch or merge compilation."""
+
+    zip: bytes
+    """Raw ZIP bytes containing all compiled PDFs and ``manifest.json``."""
+    manifest: BatchManifest
+
+
 # ── Helper ────────────────────────────────────────────────────────────────────
 
 
@@ -1194,3 +1225,111 @@ class FormaTexClient:
             :class:`ThumbnailResult` with raw PNG bytes and pixel dimensions.
         """
         return self.thumbnail(latex, engine=engine, page=page, dpi=dpi)
+
+    # ── Batch Generation ──────────────────────────────────────────────────────
+
+    def generate_batch(
+        self,
+        template: str,
+        data: list[dict],
+        *,
+        engine: str = "pdflatex",
+        filename: str | None = None,
+    ) -> BatchResult:
+        """Compile a LaTeX template against a list of data rows into a ZIP of PDFs.
+
+        Each row is compiled independently in parallel on the server (up to 5
+        concurrent). Partial failures are non-fatal — failed rows are recorded
+        in the manifest while successful PDFs are still included in the ZIP.
+
+        Does **not** count against your monthly compilation quota.
+        Rate limit: 10 requests/minute per API key. Max 50 rows per request.
+
+        Args:
+            template: LaTeX source with ``{{field}}`` placeholders. Max 512 KB.
+            data: List of data dicts (max 50). Each dict's keys map to template
+                variables. Values may be strings, numbers, booleans, or lists.
+            engine: ``"pdflatex"`` (default), ``"xelatex"``, or ``"lualatex"``.
+            filename: Filename pattern for each PDF (without ``.pdf``).
+                Supports ``{{field}}``, ``{{@index}}``, ``{{@number}}``.
+                Default: ``"document-{{@number}}"``.
+
+        Returns:
+            :class:`BatchResult` with raw ZIP bytes and a manifest.
+
+        Example::
+
+            result = client.generate_batch(
+                cert_template,
+                [{"name": "Alice", "course": "LaTeX 101"},
+                 {"name": "Bob",   "course": "LaTeX 101"}],
+                filename="cert-{{name}}",
+            )
+            Path("certificates.zip").write_bytes(result.zip)
+            print(result.manifest.success)  # 2
+        """
+        body: dict[str, Any] = {"template": template, "data": data, "engine": engine}
+        if filename is not None:
+            body["filename"] = filename
+        raw = self._http.post_json("/api/v1/generate/batch", body)
+        return self._parse_batch_result(raw)
+
+    def compile_merge(
+        self,
+        template: str,
+        csv: str,
+        *,
+        engine: str = "pdflatex",
+        filename: str | None = None,
+    ) -> BatchResult:
+        """Compile a LaTeX template against CSV data into a ZIP of PDFs.
+
+        The first CSV row is the header; each subsequent row becomes one PDF.
+        Column names map directly to template placeholders.
+
+        Does **not** count against your monthly compilation quota.
+        Rate limit: 10 requests/minute per API key. Max 50 data rows.
+
+        Args:
+            template: LaTeX source with ``{{column}}`` placeholders. Max 512 KB.
+            csv: CSV string; first row is the header.
+            engine: ``"pdflatex"`` (default), ``"xelatex"``, or ``"lualatex"``.
+            filename: Filename pattern (without ``.pdf``). Default:
+                ``"document-{{@number}}"``.
+
+        Returns:
+            :class:`BatchResult` with raw ZIP bytes and a manifest.
+
+        Example::
+
+            csv_data = "name,course\\nAlice,LaTeX 101\\nBob,LaTeX 101"
+            result = client.compile_merge(cert_template, csv_data, filename="{{name}}")
+            Path("certificates.zip").write_bytes(result.zip)
+        """
+        body: dict[str, Any] = {"template": template, "csv": csv, "engine": engine}
+        if filename is not None:
+            body["filename"] = filename
+        raw = self._http.post_json("/api/v1/compile/merge", body)
+        return self._parse_batch_result(raw)
+
+    def _parse_batch_result(self, raw: dict) -> BatchResult:
+        manifest_raw = raw.get("manifest") or {}
+        results = [
+            BatchResultItem(
+                index=r.get("index", 0),
+                filename=r.get("filename", ""),
+                success=r.get("success", False),
+                error=r.get("error", ""),
+            )
+            for r in (manifest_raw.get("results") or [])
+        ]
+        manifest = BatchManifest(
+            total=manifest_raw.get("total", 0),
+            success=manifest_raw.get("success", 0),
+            failed=manifest_raw.get("failed", 0),
+            results=results,
+        )
+        return BatchResult(
+            zip=base64.b64decode(raw.get("zip", "")),
+            manifest=manifest,
+        )
