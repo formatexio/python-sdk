@@ -880,6 +880,105 @@ class FormaTexClient:
         """
         return self._compile_markup("/api/v1/compile/rst", source, engine=engine, runs=runs, timeout=timeout)
 
+    def compile_zip(
+        self,
+        zip_data: bytes,
+        *,
+        main: str | None = None,
+        engine: str = "pdflatex",
+        runs: int | None = None,
+        timeout: int | None = None,
+    ) -> "CompileResult":
+        """Compile a multi-file LaTeX project from a ZIP archive.
+
+        The ZIP should contain a root ``.tex`` file (auto-detected or specified
+        via ``main``) plus any companion files (images, ``.bib``, ``.cls``).
+        Counts against your monthly compilation quota.
+
+        Args:
+            zip_data: Raw ZIP bytes.
+            main: Entry-point ``.tex`` filename inside the ZIP (auto-detected if omitted).
+            engine: ``"pdflatex"`` (default), ``"xelatex"``, ``"lualatex"``, or ``"latexmk"``.
+            runs: Number of compiler passes (1–5).
+            timeout: Max compile time in seconds (plan-limited).
+
+        Returns:
+            :class:`CompileResult` with raw PDF bytes.
+
+        Example::
+
+            zip_bytes = Path("project.zip").read_bytes()
+            result = client.compile_zip(zip_bytes)
+            Path("out.pdf").write_bytes(result.pdf)
+        """
+        fields: dict[str, str] = {"engine": engine}
+        if main is not None:
+            fields["main"] = main
+        if runs is not None:
+            fields["runs"] = str(runs)
+        if timeout is not None:
+            fields["timeout"] = str(timeout)
+        raw = self._http.post_multipart(
+            "/api/v1/compile/zip",
+            fields=fields,
+            files={"file": ("archive.zip", zip_data, "application/zip")},
+        )
+        return CompileResult(
+            pdf=base64.b64decode(raw["pdf"]),
+            engine=raw.get("engine", engine),
+            duration_ms=raw.get("duration", 0),
+            size_bytes=raw.get("sizeBytes", 0),
+            job_id=raw.get("jobId", ""),
+            log=raw.get("log", ""),
+        )
+
+    def compile_ipynb(
+        self,
+        ipynb_data: bytes,
+        *,
+        engine: str = "pdflatex",
+        runs: int | None = None,
+        timeout: int | None = None,
+    ) -> "CompileResult":
+        """Compile a Jupyter Notebook (``.ipynb``) to PDF.
+
+        The notebook is converted to LaTeX and then compiled. Counts against
+        your monthly compilation quota.
+
+        Args:
+            ipynb_data: Raw ``.ipynb`` file bytes.
+            engine: LaTeX engine to use after conversion.
+            runs: Number of compiler passes (1–5).
+            timeout: Max compile time in seconds (plan-limited).
+
+        Returns:
+            :class:`CompileResult` with raw PDF bytes.
+
+        Example::
+
+            nb = Path("analysis.ipynb").read_bytes()
+            result = client.compile_ipynb(nb)
+            Path("out.pdf").write_bytes(result.pdf)
+        """
+        fields: dict[str, str] = {"engine": engine}
+        if runs is not None:
+            fields["runs"] = str(runs)
+        if timeout is not None:
+            fields["timeout"] = str(timeout)
+        raw = self._http.post_multipart(
+            "/api/v1/compile/ipynb",
+            fields=fields,
+            files={"file": ("notebook.ipynb", ipynb_data, "application/json")},
+        )
+        return CompileResult(
+            pdf=base64.b64decode(raw["pdf"]),
+            engine=raw.get("engine", engine),
+            duration_ms=raw.get("duration", 0),
+            size_bytes=raw.get("sizeBytes", 0),
+            job_id=raw.get("jobId", ""),
+            log=raw.get("log", ""),
+        )
+
     def _compile_markup(
         self,
         path: str,

@@ -65,6 +65,17 @@ class HTTPClient:
         resp = self._client.post(path, json=body)
         self._raise_for_status(resp)
 
+    def post_multipart(self, path: str, fields: dict, files: dict) -> dict:
+        """POST multipart/form-data; fields are text form values, files are (filename, bytes, mime) tuples."""
+        resp = self._client.post(
+            path,
+            data=fields,
+            files=files,
+            headers={"Accept": "application/json"},
+        )
+        self._raise_for_status(resp)
+        return resp.json()
+
     def delete_json(self, path: str) -> dict:
         """DELETE, expect JSON back (or empty body on 204)."""
         resp = self._client.delete(path)
